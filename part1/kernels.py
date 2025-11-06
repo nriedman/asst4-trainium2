@@ -102,7 +102,7 @@ def vector_add_stream(a_vec, b_vec):
     M = a_vec.shape[0]
 
     # TODO: You should modify this variable for Step 2a
-    FREE_DIM = 2000
+    FREE_DIM = 1000
 
     # The maximum size of our Partition Dimension
     PARTITION_DIM = 128
@@ -147,6 +147,21 @@ def matrix_transpose(a_tensor):
 
     assert M % tile_dim == N % tile_dim == 0, "Matrix dimensions not divisible by tile dimension!"
 
-    # TODO: Your implementation here. The only compute instruction you should use is `nisa.nc_transpose`.
+    for m in nl.affine_range(M // tile_dim):
+        for n in nl.affine_range(N // tile_dim):
+            # Allocate space in SBUF for tile
+            tile = nl.ndarray((tile_dim, tile_dim), dtype=a_tensor.dtype, buffer=nl.sbuf)
+
+            # Load the input tile
+            nisa.dma_copy(src=a_tensor[m * tile_dim:(m + 1) * tile_dim, n * tile_dim:(n + 1) * tile_dim], dst=tile)
+
+            # Transpose the tile
+            tileT_psum = nisa.nc_transpose(tile, dtype=tile.dtype, engine=nki.isa.tensor_engine)
+
+            # Transfer the tile from PSUM to SBUF
+            tileT_sbuf = nisa.tensor_copy(tileT_psum, dtype=tile.dtype)
+
+            # Transfer the tile from SBUG to output in HBM
+            nisa.dma_copy(src=tileT_sbuf, dst=out[n * tile_dim:(n + 1) * tile_dim, m * tile_dim:(m + 1) * tile_dim])
 
     return out
