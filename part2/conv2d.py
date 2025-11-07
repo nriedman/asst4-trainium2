@@ -68,11 +68,23 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     c_in_pmax = nl.tile_size.pmax
     n_tiles_c_in = in_channels // c_in_pmax
 
+    X_res = X.reshape((batch_size, in_channels, input_height * input_width))
+
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        raise RuntimeError("Please fill your implementation of computing convolution"
-                           " of X[b] with the weights W and bias b, followed by a"
-                           " maxpool and store the result in X_out[b]")
+        # To start, assume the images are small (they can fit in SBUF) and move the entire image to SBUF
+        img_sbuf = nl.ndarray((in_channels, input_height * input_width))
+        nl.dma_copy(dst=img_sbuf, src=X_res[b], dtype=X.dtype)
+
+        out_sbuf = nl.ndarray((out_channels, out_height * out_width))
+
+        # Perform the convolution
+        for i in nl.affine_range(filter_height):
+            for j in nl.affine_range(filter_width):
+                img_sbuf_shifted = 
+
+        # Accumulate the results in output
+
 
     return X_out
 
