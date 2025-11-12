@@ -67,29 +67,39 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     # Various tiling dimensions (You may want to define more of them)
     c_in_pmax = nl.tile_size.pmax
     n_tiles_c_in = in_channels // c_in_pmax
+    c_out_tile = 128
+
 
     X_res = X.reshape((batch_size, in_channels, input_height * input_width))
     W_res = W.reshape((out_channels, in_channels, filter_height * filter_width))
 
-    # add output channel tiling for loop
+
 
     # Process the images in batches
     for b in nl.affine_range(batch_size):
-        # To start, assume the images are small (they can fit in SBUF) and move the entire image to SBUF
-        img_sbuf = nl.ndarray((in_channels, input_height * input_width))
-        nl.dma_copy(dst=img_sbuf, src=X_res[b], dtype=X.dtype)
+        # add output channel tiling for loop
+        for c_out_start in nl.affine_range(0, out_channels, c_out_tile):
+            # To start, assume the images are small (they can fit in SBUF) and move the entire image to SBUF
+            img_sbuf = nl.ndarray((in_channels, input_height * input_width))
+            nl.dma_copy(dst=img_sbuf, src=X_res[b], dtype=X.dtype)
 
-        out_psum = nl.zeros((out_channels, out_height * out_width), dtype=nl.float32, buffer=nl.psum)
+            out_sbuf = nl.ndarray((out_channels, out_height * out_width))
 
-        # Perform the convolution
-        for i in nl.affine_range(filter_height):
-            for j in nl.affine_range(filter_width):
-                img_sbuf_shifted = img_sbuf[:, (i * input_width + j):(i * input_width + j) + out_height * out_width]
+            # Perform the convolution
+            for i in nl.affine_range(filter_height):
+                for j in nl.affine_range(filter_width):
+                    # input channel tiling for loop
+                    for c_in_start in nl.affine_range(0, in_channels, c_in_pmax):
+                        # load the input tile
+                        # shift the input tile
+                        # load the weight tile
+                        # todo:Bias
 
-               # add output channel tiling for loop
-
-        # Accumulate the results in output
-    
+                        # perform the matrix multiplication and accumulate the results
+                        for h in nl.affine_range(out_height):
+                            for w in nl.affine_range(out_width):
+                                print("todo")
+                # Apply bias and max-pooling
 
     return X_out
 
