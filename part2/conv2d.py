@@ -71,6 +71,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     X_res = X.reshape((batch_size, in_channels, input_height * input_width))
     W_res = W.reshape((out_channels, in_channels, filter_height * filter_width))
 
+    # add output channel tiling for loop
+
     # Process the images in batches
     for b in nl.affine_range(batch_size):
         # To start, assume the images are small (they can fit in SBUF) and move the entire image to SBUF
@@ -78,11 +80,13 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         nl.dma_copy(dst=img_sbuf, src=X_res[b], dtype=X.dtype)
 
         out_psum = nl.zeros((out_channels, out_height * out_width), dtype=nl.float32, buffer=nl.psum)
-    
+
         # Perform the convolution
         for i in nl.affine_range(filter_height):
             for j in nl.affine_range(filter_width):
                 img_sbuf_shifted = img_sbuf[:, (i * input_width + j):(i * input_width + j) + out_height * out_width]
+
+               # add output channel tiling for loop
 
         # Accumulate the results in output
     
