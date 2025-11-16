@@ -101,14 +101,64 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     
     # W_T now has all the weights in SBUF, transposed and chunked by c_in and c_out tile
 
+    X_res = X.reshape((batch_size, c_in_pmax, n_tiles_c_in, input_height, input_width))
+    X_out_res = X_out.reshape((batch_size, c_out_pmax, n_tiles_c_out, out_pool_height, out_pool_width))
+
     # Main loop
 
     for b in nl.affine_range(batch_size):
 
-        for c_out_tile in nl.affine_range(n_tiles_c_out):
+        for out_row_pair in nl.affine_range(out_height // 2):
 
-            for out_row in nl.affine_range(out_height // 2, 2):
-                pass
+            # Make space to store output rows in sbuf
+            conv_out_rows = nl.ndarray((c_out_pmax, n_tiles_c_out, 2, out_width), dtype=X_out.dtype, buffer=nl.sbuf)
+
+            # For each out row pair, we need 4 input rows, so load the entire rows in once
+            # Shape: (c_in_pmax, n_tiles_c_in, 4, input_width)
+            x_in_rows = nl.ndarray((c_in_pmax, n_tiles_c_in, 4, input_width), dtype=X.dtype, buffer=nl.sbuf)
+            nisa.dma_copy(
+                dst=x_in_rows,
+                src=X_res[b, :, :, out_row_pair*4:(out_row_pair+1)*4, :]
+            )
+
+            for c_out_tile in nl.affine_range(n_tiles_c_out):
+                # Now, process one input row at a time
+                for out_row in nl.affine_range(2):
+                    # Shape: (c_out_pmax, out_width)
+                    row_conv_psum = nl.zeros((c_out_pmax, out_width), dtype=X.dtype, buffer=nl.psum)
+
+                    # Compute the convolution via matrix mult
+                    for c_in_tile in nl.affine_range(n_tiles_c_in):
+                        for i in nl.affine_range(filter_height):
+                            for j in nl.affine_range(filter_width):
+                                # Shape: (c_in_pmax, c_out_pmax)
+                                w_T = W_T[:, :, c_out_tile, c_in_tile, i, j]
+                                
+                                # Shape: (c_in_pmax, out_width)
+                                x_in = x_in_rows[:, c_in_tile, out_row + i, i:input_width - filter_width + i]
+
+                                # Do the matrix multiplication and accumulate!
+                                row_conv_psum += nisa.nc_matmul(w_T[...], x_in[...])
+                    
+                    # Add the bias and move to sbuf
+                    # Shape: (c_out_pmax, out_width)
+                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(conv_tile_out_psum, nl.add, B_sbuf[:, c_out_tile])
+            
+            # Now, conv_out_rows stores two complete rows of convolutions plus bias
+            # Shape: (c_out_pmax, n_tiles_c_out, 2, out_width)
+
+            # We can go ahead and apply max pooling if necessary
+            conv_out_rows_res = conv_out_rows.reshape((c_out_pmax, n_tiles_c_out, 2 // pool_size, pool_size, out_width // pool_size, pool_size))
+            pool_out_rows = nisa.tensor_reduce(nl.max, conv_out_rows_res, axis=[3,5])
+
+            # Pool out_rows now contains fused convolution/max-pool row(s).
+            # Shape: (c_out_pmax, n_tiles_c_out, 1 or 2, out_pool_width)
+
+            # Go ahead and write to X_out_res
+            nisa.dma_copy(
+                src=pool_out_rows,
+                dst=X_out_res[b, :, :, out_row_pair*2:out_row_pair*2+2//pool_size, :]
+            )
 
     return X_out
 
