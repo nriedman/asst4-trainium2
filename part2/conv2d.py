@@ -158,8 +158,10 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             # Go ahead and write to X_out_res
             nisa.dma_copy(
                 src=pool_out_rows,
-                dst=X_out_res[b, :, :, out_row_pair*2:out_row_pair*2+2//pool_size, :]
+                dst=X_out_res[b, :, :, out_row_pair*(2//pool_size):(out_row_pair+1)*(2//pool_size), :]
             )
+
+    nl.device_print('finished: ', X_out)
 
     return X_out
 
