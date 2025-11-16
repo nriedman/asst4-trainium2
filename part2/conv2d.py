@@ -76,8 +76,14 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     # Load W into sbuf and transpose
     W_res = W.reshape((c_out_pmax, c_in_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width))
     W_T = nl.ndarray((c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
+
+    bias_res = bias.reshape((c_out_pmax, n_tiles_c_out))
+    B_sbuf = nl.ndarray((c_out_pmax, n_tiles_c_out), dtype=bias.dtype, buffer=nl.sbuf)
     
     for c_out_tile in nl.affine_range(n_tiles_c_out):
+        # load in bias while we're at it
+
+
         for c_in_tile in nl.affine_range(n_tiles_c_in):
             for i in nl.affine_range(filter_height):
                 for j in nl.affine_range(filter_width):
@@ -114,6 +120,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
                             pass
 
+                pool_tile_out = nisa.tensor_scalar(conv_tile_out_psum, nl.add, bias[c_out_tile*c_out_pmax:(c_out_tile+1)*c_out_pmax])
 
     return X_out
 
