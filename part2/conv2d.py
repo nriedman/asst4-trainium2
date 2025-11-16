@@ -70,6 +70,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     c_out_pmax = nl.tile_size.pmax
     n_tiles_c_out = out_channels // c_out_pmax
 
+    hw_pmax = nl.tile_size.pmax
+    n_tiles_hw = (input_height * input_width) // hw_pmax
+
     # Load W into sbuf and transpose
     W_res = W.reshape((c_out_pmax, c_in_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width))
     W_T = nl.ndarray((c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
@@ -84,6 +87,34 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     w_T_psum = nisa.nc_transpose(w, dtype=w.dtype, engine=nki.isa.tensor_engine)
 
                     W_T[:, :, c_out_tile, c_in_tile, i, j] = nisa.tensor_copy(w_T_psum, dtype=w_T_psum.dtype)
+    
+    # W_T now has all the weights in SBUF, transposed and chunked by c_in and c_out tile
+
+    # Main loop
+
+    for b in nl.affine_range(batch_size):
+
+        for c_out_tile in nl.affine_range(n_tiles_c_out):
+
+            for hw_tile_pair in nl.affine_range(n_tiles_hw // 2):
+
+                for c_in_tile in nl.affine_range(n_tiles_c_in):
+
+                    # Accumulate the results for this output tile in psum 
+                    conv_tile_out_psum = nl.zeros((c_out_pmax, 2, hw_pmax), X_out.dtype, buffer=nl.psum)
+
+                    for i in nl.affine_range(filter_height):
+                        for j in nl.affine_range(filter_width):
+                            
+                            # Transposed weights are pre-loaded
+                            # Shape: (c_in_pmax, c_out_pmax)
+                            w_T = W_T[:, :, c_out_tile, c_in_tile, i, j]
+
+                            # Load in shifted image input
+                            x_in = nl.ndarray((c_in_pmax, hw_pmax), dtype=X.dtype, buffer=nl.sbuf)
+
+                            
+
 
     return X_out
 
