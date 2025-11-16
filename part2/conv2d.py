@@ -74,12 +74,12 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     W_res = W.reshape((c_out_pmax, n_tiles_c_out, c_in_pmax, n_tiles_c_in, filter_height, filter_width))
     W_T = nl.ndarray((c_in_pmax, n_tiles_c_in, c_out_pmax, n_tiles_c_out, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
 
-    B_sbuf = nl.ndarray((c_out_pmax, n_tiles_c_out), dtype=bias.dtype, buffer=nl.sbuf)
-    
-    for c_out_tile in nl.affine_range(n_tiles_c_out):
-        # load in bias while we're at it
-        nisa.dma_copy(src=bias[c_out_tile*c_out_pmax:(c_out_tile+1)*c_out_pmax], dst=B_sbuf[:, c_out_tile])
+    # Prepare bias arranged in the same tile ordering as the kernel reshape
+    B_hbm = nl.ndarray((c_out_pmax, n_tiles_c_out), dtype=bias.dtype, buffer=nl.hbm)
+    # Copy the reshaped bias (shape (c_out_pmax, n_tiles_c_out)) into HBM so per-column DMA is possible
+    nisa.dma_copy(src=bias.reshape((c_out_pmax, n_tiles_c_out)), dst=B_hbm)
 
+    for c_out_tile in nl.affine_range(n_tiles_c_out):
         for c_in_tile in nl.affine_range(n_tiles_c_in):
             for i in nl.affine_range(filter_height):
                 for j in nl.affine_range(filter_width):
@@ -115,10 +115,15 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             )
 
             for c_out_tile in nl.affine_range(n_tiles_c_out):
+                # Load bias column for this tile into SBUF as (c_out_pmax,1)
+                b_sbuf = nl.ndarray((c_out_pmax, 1), dtype=bias.dtype, buffer=nl.sbuf)
+                # Copy the column from the HBM-resident reshaped bias into SBUF (2D->2D DMA)
+                nisa.dma_copy(src=B_hbm[:, c_out_tile:c_out_tile+1], dst=b_sbuf)
+
                 # Now, process one input row at a time
                 for out_row in nl.affine_range(2):
                     # Shape: (c_out_pmax, out_width)
-                    row_conv_psum = nl.zeros((c_out_pmax, out_width), dtype=X.dtype, buffer=nl.psum)
+                    row_conv_psum = nl.zeros((c_out_pmax, out_width), nl.float32, buffer=nl.psum)
 
                     # Compute the convolution via matrix mult
                     for c_in_tile in nl.affine_range(n_tiles_c_in):
@@ -136,7 +141,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     
                     # Add the bias and move to sbuf
                     # Shape: (c_out_pmax, out_width)
-                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(row_conv_psum, nl.add, B_sbuf[:, c_out_tile])
+                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(row_conv_psum, nl.add, b_sbuf[:, 0])
             
             # Now, conv_out_rows stores two complete rows of convolutions plus bias
             # Shape: (c_out_pmax, n_tiles_c_out, 2, out_width)
@@ -149,6 +154,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             # Shape: (c_out_pmax, n_tiles_c_out, 1 or 2, out_pool_width)
 
             # Go ahead and write to X_out_res
+            # Copy per-tile / per-output-subrow to avoid multi-dim DMA ordering issues
             nisa.dma_copy(
                 src=pool_out_rows,
                 dst=X_out_res[b, :, :, out_row_pair*(2//pool_size):(out_row_pair+1)*(2//pool_size), :]
