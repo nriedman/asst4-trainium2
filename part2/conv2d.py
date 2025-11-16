@@ -70,15 +70,6 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     c_out_pmax = nl.tile_size.pmax
     n_tiles_c_out = out_channels // c_out_pmax
 
-    hw_pmax = nl.tile_size.pmax
-    n_tiles_hw = (input_height * input_width) // hw_pmax
-
-    w_pmax = nl.tile_size.pmax
-    n_tiles_w = (input_width + w_pmax - 1) // w_pmax
-
-    pool_tile_height = 2 // pool_size
-    pool_tile_width = hw_pmax // pool_size
-
     # Load W into sbuf and transpose
     W_res = W.reshape((c_out_pmax, c_in_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width))
     W_T = nl.ndarray((c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
@@ -161,4 +152,4 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                 dst=X_out_res[b, :, :, out_row_pair*(2//pool_size):(out_row_pair+1)*(2//pool_size), :]
             )
 
-    return X_out
+    return X_out_res.reshape(X_out.shape)
