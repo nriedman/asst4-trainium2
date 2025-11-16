@@ -140,9 +140,10 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                                 row_conv_psum += nisa.nc_matmul(w_T[...], x_in[...])
                     
                     # Add the bias and move to sbuf
+                    # (NOTE: using tensor_tensor instead of tensor_scalar to work around compiler bug related to f16 inputs)
                     # Shape: (c_out_pmax, out_width)
-                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(row_conv_psum, nl.add, b_sbuf[:, 0])
-            
+                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_tensor(row_conv_psum, b_sbuf[:, 0], op=nl.add, dtype=nl.float32)
+                                
             # Now, conv_out_rows stores two complete rows of convolutions plus bias
             # Shape: (c_out_pmax, n_tiles_c_out, 2, out_width)
 
