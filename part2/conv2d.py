@@ -107,6 +107,15 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
 
         for c_out_tile in nl.affine_range(n_tiles_c_out):
 
+            for out_row in nl.affine_range(out_height // 2, 2):
+                pass
+
+    return X_out
+
+
+"""
+for c_out_tile in nl.affine_range(n_tiles_c_out):
+
             for hw_tile_pair in nl.affine_range(n_tiles_hw // 2):
                 
                 # Accumulate the results for this output tile in psum 
@@ -123,7 +132,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                             # Load in shifted image input
                             x_in = nl.zeros((c_in_pmax, 2, hw_pmax), dtype=X.dtype, buffer=nl.sbuf)
 
-                            h_start = hw_tile_pair
+                            h_start = (hw_tile_pair // n_tiles_w) * 2
 
                             conv_tile_out_psum += nisa.nc_matmul(w_T[...], x_in[...])
 
@@ -149,6 +158,4 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     src=pool_tile_out,
                     dst=X_out[b, c_out_tile*c_out_pmax:(c_out_tile+1)*c_out_pmax, out_height_start:out_height_end, out_width_start:out_width_end]
                 )
-
-    return X_out
-
+"""
