@@ -118,7 +118,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             x_in_rows = nl.ndarray((c_in_pmax, n_tiles_c_in, 4, input_width), dtype=X.dtype, buffer=nl.sbuf)
             nisa.dma_copy(
                 dst=x_in_rows,
-                src=X_res[b, :, :, out_row_pair*4:(out_row_pair+1)*4, :]
+                src=X_res[b, :, :, out_row_pair:out_row_pair+4, :]
             )
 
             for c_out_tile in nl.affine_range(n_tiles_c_out):
@@ -131,18 +131,19 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     for c_in_tile in nl.affine_range(n_tiles_c_in):
                         for i in nl.affine_range(filter_height):
                             for j in nl.affine_range(filter_width):
+                                # W_T Shape: (c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width)
                                 # Shape: (c_in_pmax, c_out_pmax)
                                 w_T = W_T[:, :, c_out_tile, c_in_tile, i, j]
                                 
                                 # Shape: (c_in_pmax, out_width)
-                                x_in = x_in_rows[:, c_in_tile, out_row + i, i:input_width - filter_width + i]
+                                x_in = nisa.tensor_copy(x_in_rows[:, c_in_tile, out_row + i, j:j+out_width])
 
                                 # Do the matrix multiplication and accumulate!
                                 row_conv_psum += nisa.nc_matmul(w_T[...], x_in[...])
                     
                     # Add the bias and move to sbuf
                     # Shape: (c_out_pmax, out_width)
-                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(conv_tile_out_psum, nl.add, B_sbuf[:, c_out_tile])
+                    conv_out_rows[:, c_out_tile, out_row, :] = nisa.tensor_scalar(row_conv_psum, nl.add, B_sbuf[:, c_out_tile])
             
             # Now, conv_out_rows stores two complete rows of convolutions plus bias
             # Shape: (c_out_pmax, n_tiles_c_out, 2, out_width)
