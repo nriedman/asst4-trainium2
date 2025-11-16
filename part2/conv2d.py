@@ -97,12 +97,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
         for c_out_tile in nl.affine_range(n_tiles_c_out):
 
             for hw_tile_pair in nl.affine_range(n_tiles_hw // 2):
+                
+                # Accumulate the results for this output tile in psum 
+                conv_tile_out_psum = nl.zeros((c_out_pmax, 2, hw_pmax), X_out.dtype, buffer=nl.psum)
 
                 for c_in_tile in nl.affine_range(n_tiles_c_in):
-
-                    # Accumulate the results for this output tile in psum 
-                    conv_tile_out_psum = nl.zeros((c_out_pmax, 2, hw_pmax), X_out.dtype, buffer=nl.psum)
-
                     for i in nl.affine_range(filter_height):
                         for j in nl.affine_range(filter_width):
                             
@@ -113,7 +112,7 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                             # Load in shifted image input
                             x_in = nl.ndarray((c_in_pmax, hw_pmax), dtype=X.dtype, buffer=nl.sbuf)
 
-                            
+                            pass
 
 
     return X_out
