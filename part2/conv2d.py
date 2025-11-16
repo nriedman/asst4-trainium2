@@ -33,8 +33,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     c_in_pmax = nl.tile_size.pmax
     n_tiles_c_in = in_channels // c_in_pmax
     # Tile sizes
-    c_out_tile = 128  # Maximum partition dimension
-    c_in_tile = 128   # Maximum for input channels in matmul
+    c_out_tile = 128  # maximum partition dimension
+    c_in_tile = 128   # maximum for input channels in matmul
     
     # Process the images in batches
     for b in nl.affine_range(batch_size):
