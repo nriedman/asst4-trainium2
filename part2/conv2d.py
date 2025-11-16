@@ -71,8 +71,8 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
     n_tiles_c_out = out_channels // c_out_pmax
 
     # Load W into sbuf and transpose
-    W_res = W.reshape((c_out_pmax, c_in_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width))
-    W_T = nl.ndarray((c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
+    W_res = W.reshape((c_out_pmax, n_tiles_c_out, c_in_pmax, n_tiles_c_in, filter_height, filter_width))
+    W_T = nl.ndarray((c_in_pmax, n_tiles_c_in, c_out_pmax, n_tiles_c_out, filter_height, filter_width), dtype=W.dtype, buffer=nl.sbuf)
 
     B_sbuf = nl.ndarray((c_out_pmax, n_tiles_c_out), dtype=bias.dtype, buffer=nl.sbuf)
     
@@ -84,11 +84,11 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             for i in nl.affine_range(filter_height):
                 for j in nl.affine_range(filter_width):
                     w = nl.ndarray((c_out_pmax, c_in_pmax), dtype=W_res.dtype, buffer=nl.sbuf)
-                    nisa.dma_copy(src=W_res[:, :, c_out_tile, c_in_tile, i, j], dst=w)
+                    nisa.dma_copy(src=W_res[:, c_out_tile, :, c_in_tile, i, j], dst=w)
 
                     w_T_psum = nisa.nc_transpose(w, dtype=w.dtype, engine=nki.isa.tensor_engine)
 
-                    W_T[:, :, c_out_tile, c_in_tile, i, j] = nisa.tensor_copy(w_T_psum, dtype=w_T_psum.dtype)
+                    W_T[:, c_in_tile, :, c_out_tile, i, j] = nisa.tensor_copy(w_T_psum, dtype=w_T_psum.dtype)
     
     # W_T now has all the weights in SBUF, transposed and chunked by c_in and c_out tile
 
@@ -104,12 +104,14 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
             # Make space to store output rows in sbuf
             conv_out_rows = nl.ndarray((c_out_pmax, n_tiles_c_out, 2, out_width), dtype=X_out.dtype, buffer=nl.sbuf)
 
-            # For each out row pair, we need 4 input rows, so load the entire rows in once
-            # Shape: (c_in_pmax, n_tiles_c_in, 4, input_width)
-            x_in_rows = nl.ndarray((c_in_pmax, n_tiles_c_in, 4, input_width), dtype=X.dtype, buffer=nl.sbuf)
+            # For each output row pair, we need filter_height + 1 input rows
+            # out_row_pair ranges from 0 to out_height//2 - 1
+            # We need input rows [out_row_pair*2 : out_row_pair*2 + filter_height + 1]
+            # Shape: (c_in_pmax, n_tiles_c_in, filter_height + 1, input_width)
+            x_in_rows = nl.ndarray((c_in_pmax, n_tiles_c_in, filter_height + 1, input_width), dtype=X.dtype, buffer=nl.sbuf)
             nisa.dma_copy(
                 dst=x_in_rows,
-                src=X_res[b, :, :, out_row_pair:out_row_pair+4, :]
+                src=X_res[b, :, :, out_row_pair*2:out_row_pair*2 + filter_height + 1, :]
             )
 
             for c_out_tile in nl.affine_range(n_tiles_c_out):
@@ -122,9 +124,9 @@ def fused_conv2d_maxpool(X, W, bias, pool_size=1):
                     for c_in_tile in nl.affine_range(n_tiles_c_in):
                         for i in nl.affine_range(filter_height):
                             for j in nl.affine_range(filter_width):
-                                # W_T Shape: (c_in_pmax, c_out_pmax, n_tiles_c_out, n_tiles_c_in, filter_height, filter_width)
+                                # W_T Shape: (c_in_pmax, n_tiles_c_in, c_out_pmax, n_tiles_c_out, filter_height, filter_width)
                                 # Shape: (c_in_pmax, c_out_pmax)
-                                w_T = W_T[:, :, c_out_tile, c_in_tile, i, j]
+                                w_T = W_T[:, c_in_tile, :, c_out_tile, i, j]
                                 
                                 # Shape: (c_in_pmax, out_width)
                                 x_in = nisa.tensor_copy(x_in_rows[:, c_in_tile, out_row + i, j:j+out_width])
